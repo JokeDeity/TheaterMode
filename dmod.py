@@ -1,12 +1,14 @@
 import sys
 import os
 import pygame
-from PyQt5.QtWidgets import (QApplication, QWidget, QSystemTrayIcon, QMenu, QAction,
-                             QInputDialog, QColorDialog)
+from PyQt5.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, pyqtProperty, pyqtSignal, QObject, QSettings, QEasingCurve
 from PyQt5.QtGui import QPainter, QColor, QPen, QIcon, QPixmap
 from pynput import keyboard
 from veil import get_veil, VEIL_LABELS
+from gui import SettingsWindow
+from shapes import clear_selection_holes, draw_selection_outlines
+import winutils
 
 # ── Sound setup ──────────────────────────────────────────────────────────────
 pygame.mixer.init()
@@ -27,6 +29,8 @@ class HotkeyManager(QObject):
     primary_pressed = pyqtSignal()
     primary_released = pyqtSignal()
     secondary_triggered = pyqtSignal()
+    cursorlock_triggered = pyqtSignal()
+    aot_triggered = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -34,13 +38,17 @@ class HotkeyManager(QObject):
         self.listener = None
         self.primary_str = self.settings.value("primary_hotkey", "<ctrl>+<f3>")
         self.secondary_str = self.settings.value("secondary_hotkey", "<shift>+<ctrl>+<f3>")
+        self.cursorlock_str = self.settings.value("cursorlock_hotkey", "<f7>")
+        self.aot_str = self.settings.value("aot_hotkey", "<f8>")
         self.primary_active = False
+        self._held_keys = set()
         self.start_listener()
 
     def start_listener(self):
         if self.listener:
             self.listener.stop()
 
+        self._held_keys = set()
         self.primary_keys = set(keyboard.HotKey.parse(self.primary_str))
         
         def on_primary_activate():
@@ -50,22 +58,44 @@ class HotkeyManager(QObject):
         def on_secondary_activate():
             self.secondary_triggered.emit()
 
+        def on_cursorlock_activate():
+            self.cursorlock_triggered.emit()
+
+        def on_aot_activate():
+            self.aot_triggered.emit()
+
         self.primary_hk = keyboard.HotKey(keyboard.HotKey.parse(self.primary_str), on_primary_activate)
         self.secondary_hk = keyboard.HotKey(keyboard.HotKey.parse(self.secondary_str), on_secondary_activate)
+        self.cursorlock_hk = keyboard.HotKey(keyboard.HotKey.parse(self.cursorlock_str), on_cursorlock_activate)
+        self.aot_hk = keyboard.HotKey(keyboard.HotKey.parse(self.aot_str), on_aot_activate)
 
         def on_press(key):
             try:
                 canonical_key = self.listener.canonical(key)
+
+                # Windows re-sends "key down" repeatedly while a key is held.
+                # pynput's HotKey doesn't dedupe that, so without this guard
+                # a hotkey can re-fire multiple times from one physical press.
+                if canonical_key in self._held_keys:
+                    return
+                self._held_keys.add(canonical_key)
+
                 self.primary_hk.press(canonical_key)
                 self.secondary_hk.press(canonical_key)
+                self.cursorlock_hk.press(canonical_key)
+                self.aot_hk.press(canonical_key)
             except AttributeError:
                 pass
 
         def on_release(key):
             try:
                 canonical_key = self.listener.canonical(key)
+                self._held_keys.discard(canonical_key)
+
                 self.primary_hk.release(canonical_key)
                 self.secondary_hk.release(canonical_key)
+                self.cursorlock_hk.release(canonical_key)
+                self.aot_hk.release(canonical_key)
 
                 if self.primary_active:
                     # If any key making up the primary combo is released, trigger the release event
@@ -78,6 +108,16 @@ class HotkeyManager(QObject):
         self.listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         self.listener.start()
 
+    def pause(self):
+        """Temporarily stops the global listener (used while capturing a new hotkey)."""
+        if self.listener:
+            self.listener.stop()
+            self.listener = None
+
+    def resume(self):
+        """Restarts the global listener after a pause() with no changes."""
+        self.start_listener()
+
     def set_primary_hotkey(self, primary):
         self.primary_str = primary
         self.settings.setValue("primary_hotkey", primary)
@@ -86,6 +126,16 @@ class HotkeyManager(QObject):
     def set_secondary_hotkey(self, secondary):
         self.secondary_str = secondary
         self.settings.setValue("secondary_hotkey", secondary)
+        self.start_listener()
+
+    def set_cursorlock_hotkey(self, combo):
+        self.cursorlock_str = combo
+        self.settings.setValue("cursorlock_hotkey", combo)
+        self.start_listener()
+
+    def set_aot_hotkey(self, combo):
+        self.aot_str = combo
+        self.settings.setValue("aot_hotkey", combo)
         self.start_listener()
 
 
@@ -111,6 +161,8 @@ class TheaterOverlay(QWidget):
         self.veil = get_veil(self.veil_type)
         self.veil.set_parent(self)
 
+        self.selection_shape = self.settings.value("selection_shape", "rectangle")
+
         self.anim = QPropertyAnimation(self, b"overlayOpacity")
         self.anim.setEasingCurve(QEasingCurve.InOutQuad)
 
@@ -126,6 +178,11 @@ class TheaterOverlay(QWidget):
         
         if self.state != 'hidden':
             self.veil.on_show()
+        self.update()
+
+    def set_selection_shape(self, shape):
+        self.selection_shape = shape
+        self.settings.setValue("selection_shape", shape)
         self.update()
 
     def get_opacity(self):
@@ -238,24 +295,21 @@ class TheaterOverlay(QWidget):
 
         if self.state == 'selecting':
             painter.fillRect(self.rect(), QColor(0, 0, 0, 80))
-            painter.setCompositionMode(QPainter.CompositionMode_Clear)
-            
-            for rect in self.selection_rects:
-                painter.fillRect(rect, Qt.transparent)
-            if not self.current_rect.isNull():
-                painter.fillRect(self.current_rect, Qt.transparent)
-                
-            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            clear_selection_holes(painter, self.selection_rects, self.selection_shape)
+            if not self.current_rect.isNull() and not self.current_rect.isEmpty():
+                clear_selection_holes(painter, [self.current_rect], self.selection_shape)
+
             pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
-            painter.setPen(pen)
-            
-            for rect in self.selection_rects:
-                painter.drawRect(rect)
-            if not self.current_rect.isNull():
-                painter.drawRect(self.current_rect)
-                
+            draw_selection_outlines(
+                painter, self.selection_rects, self.selection_shape, pen,
+                current_rect=self.current_rect if not self.current_rect.isNull() else None,
+            )
+
         elif self.state in ('theater', 'paused'):
-            self.veil.paint(painter, self.rect(), self.selection_rects, self._opacity, self.veil_color)
+            self.veil.paint(
+                painter, self.rect(), self.selection_rects, self._opacity, self.veil_color,
+                self.selection_shape,
+            )
 
 
 class AppController(QObject):
@@ -264,82 +318,60 @@ class AppController(QObject):
         self.app = app
         self.overlay = TheaterOverlay()
         self.hotkey_mgr = HotkeyManager()
+        self.cursor_locked = False
 
         self.hotkey_mgr.primary_pressed.connect(self.overlay.on_primary_pressed)
         self.hotkey_mgr.primary_released.connect(self.overlay.on_primary_released)
         self.hotkey_mgr.secondary_triggered.connect(self.overlay.toggle_pause)
+        self.hotkey_mgr.cursorlock_triggered.connect(self.toggle_cursor_lock)
+        self.hotkey_mgr.aot_triggered.connect(self.toggle_always_on_top)
+
+        # Safety net: always release any active cursor clip on exit,
+        # mirroring the OnExit handler in the original AHK script.
+        self.app.aboutToQuit.connect(winutils.release_cursor_lock)
+
+        self.settings_window = SettingsWindow(self.overlay, self.hotkey_mgr)
 
         self.setup_tray()
 
+    def toggle_cursor_lock(self):
+        play_sound("Cursorlock.wav")
+        self.cursor_locked = not self.cursor_locked
+        if self.cursor_locked:
+            hwnd = winutils.get_foreground_window()
+            if not winutils.lock_cursor_to_window(hwnd):
+                self.cursor_locked = False
+        else:
+            winutils.release_cursor_lock()
+
+    def toggle_always_on_top(self):
+        play_sound("AOT.wav")
+        winutils.toggle_always_on_top()
+
+    def show_settings(self):
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
+
     def setup_tray(self):
         self.tray_icon = QSystemTrayIcon()
-        pixmap = QPixmap(32, 32)
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        painter.setBrush(QColor(100, 100, 100))
-        painter.drawRoundedRect(2, 2, 28, 28, 5, 5)
-        painter.setCompositionMode(QPainter.CompositionMode_Clear)
-        painter.drawRect(8, 8, 16, 16)
-        painter.end()
-
-        self.tray_icon.setIcon(QIcon(pixmap))
-        self.tray_icon.setToolTip("Theater Mode")
+        self.tray_icon.setIcon(QIcon(os.path.join(SCRIPT_DIR, "icon.ico")))
+        self.tray_icon.setToolTip("DMod")
 
         self.menu = QMenu()
-        self.menu.addAction("Set Main Hotkey...", self.change_main_hotkey)
-        self.menu.addAction("Set Pause Hotkey...", self.change_pause_hotkey)
-        
-        veil_menu = self.menu.addMenu("Veil Type")
-        for key, label in VEIL_LABELS:
-            action = veil_menu.addAction(label)
-            action.triggered.connect(lambda checked, k=key: self.overlay.set_veil_type(k))
-
-        self.menu.addSeparator()
-        self.menu.addAction("Set Opacity...", self.change_opacity)
-        self.menu.addAction("Set Veil Color...", self.change_color)
-        self.menu.addAction("Set Fade Delay...", self.change_delay)
-        self.menu.addAction("Set Pause Fade Delay...", self.change_delay_pause)
+        self.menu.addAction("Open Settings...", self.show_settings)
         self.menu.addSeparator()
         self.menu.addAction("Exit", self.app.quit)
 
         self.tray_icon.setContextMenu(self.menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
 
-    def change_main_hotkey(self):
-        text, ok = QInputDialog.getText(None, "Main Hotkey", "Enter primary hotkey:", text=self.hotkey_mgr.primary_str)
-        if ok and text:
-            self.hotkey_mgr.set_primary_hotkey(text.lower().strip())
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self.show_settings()
 
-    def change_pause_hotkey(self):
-        text, ok = QInputDialog.getText(None, "Pause Hotkey", "Enter pause hotkey:", text=self.hotkey_mgr.secondary_str)
-        if ok and text:
-            self.hotkey_mgr.set_secondary_hotkey(text.lower().strip())
 
-    def change_opacity(self):
-        val, ok = QInputDialog.getInt(None, "Opacity", "Percentage (10-100):", int(self.overlay.target_opacity * 100), 10, 100)
-        if ok:
-            self.overlay.target_opacity = val / 100.0
-            self.overlay.settings.setValue("opacity", self.overlay.target_opacity)
-
-    def change_color(self):
-        text, ok = QInputDialog.getText(None, "Color", "Hex Color (e.g., #000000):", text=self.overlay.veil_color.name())
-        if ok and text:
-            color = QColor(text.strip())
-            if color.isValid():
-                self.overlay.veil_color = color
-                self.overlay.settings.setValue("color", color.name())
-
-    def change_delay(self):
-        val, ok = QInputDialog.getInt(None, "Fade Delay", "Milliseconds:", self.overlay.fade_duration, 0, 10000)
-        if ok:
-            self.overlay.fade_duration = val
-            self.overlay.settings.setValue("delay", val)
-
-    def change_delay_pause(self):
-        val, ok = QInputDialog.getInt(None, "Pause Fade Delay", "Milliseconds:", self.overlay.fade_duration_pause, 0, 10000)
-        if ok:
-            self.overlay.fade_duration_pause = val
-            self.overlay.settings.setValue("delay_pause", val)
 
 
 if __name__ == '__main__':
@@ -347,5 +379,8 @@ if __name__ == '__main__':
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    app.setWindowIcon(QIcon(os.path.join(SCRIPT_DIR, "icon.ico")))
+
     controller = AppController(app)
     sys.exit(app.exec_())

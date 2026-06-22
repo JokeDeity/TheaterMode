@@ -14,20 +14,16 @@ import os
 from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtGui import QPainter, QColor, QPixmap, QMovie, QRadialGradient, QImage, QLinearGradient, QPainterPath
 
+from shapes import clear_selection_holes
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # ── Shared helper ─────────────────────────────────────────────────────────────
 
-def _clear_holes(painter, selection_rects):
+def _clear_holes(painter, selection_rects, selection_shape="rectangle"):
     """Punch transparent holes so the focused windows show through."""
-    if not selection_rects:
-        return
-    painter.setCompositionMode(QPainter.CompositionMode_Clear)
-    for rect in selection_rects:
-        if not rect.isEmpty():
-            painter.fillRect(rect, Qt.transparent)
-    painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    clear_selection_holes(painter, selection_rects, selection_shape)
 
 
 # ── Base class ────────────────────────────────────────────────────────────────
@@ -39,7 +35,7 @@ class VeilBase:
     def set_parent(self, widget):
         self._parent = widget
 
-    def paint(self, painter, full_rect, selection_rects, opacity, color):
+    def paint(self, painter, full_rect, selection_rects, opacity, color, selection_shape="rectangle"):
         raise NotImplementedError
 
     def on_show(self): pass
@@ -49,11 +45,11 @@ class VeilBase:
 # ── 1. Flat Color ─────────────────────────────────────────────────────────────
 
 class FlatColorVeil(VeilBase):
-    def paint(self, painter, full_rect, selection_rects, opacity, color):
+    def paint(self, painter, full_rect, selection_rects, opacity, color, selection_shape="rectangle"):
         c = QColor(color)
         c.setAlpha(int(opacity * 255))
         painter.fillRect(full_rect, c)
-        _clear_holes(painter, selection_rects)
+        _clear_holes(painter, selection_rects, selection_shape)
 
 
 # ── 2. Waves ────────
@@ -77,7 +73,7 @@ class WavesVeil(VeilBase):
     def on_hide(self):
         self._timer.stop()
 
-    def paint(self, painter, full_rect, selection_rects, opacity, color):
+    def paint(self, painter, full_rect, selection_rects, opacity, color, selection_shape="rectangle"):
         w, h = full_rect.width(), full_rect.height()
         t = self._t
 
@@ -130,7 +126,7 @@ class WavesVeil(VeilBase):
             painter.fillPath(path, grad)
 
         painter.restore()
-        _clear_holes(painter, selection_rects)
+        _clear_holes(painter, selection_rects, selection_shape)
 
 
 # ── 3 / 4. GIF-backed veils (Smoke, Jellyfish) ──────────────────
@@ -173,13 +169,13 @@ class GifVeil(VeilBase):
         if self._movie and self._movie.state() == QMovie.Running:
             self._movie.setPaused(True)
 
-    def paint(self, painter, full_rect, selection_rects, opacity, color):
+    def paint(self, painter, full_rect, selection_rects, opacity, color, selection_shape="rectangle"):
         if not self._movie:
             # GIF file missing – fall back to a plain dark fill
             c = QColor(0, 0, 0)
             c.setAlpha(int(opacity * 255))
             painter.fillRect(full_rect, c)
-            _clear_holes(painter, selection_rects)
+            _clear_holes(painter, selection_rects, selection_shape)
             return
 
         raw = self._movie.currentPixmap()
@@ -208,7 +204,7 @@ class GifVeil(VeilBase):
         else:
             painter.drawTiledPixmap(full_rect, raw)
         painter.restore()
-        _clear_holes(painter, selection_rects)
+        _clear_holes(painter, selection_rects, selection_shape)
 
 
 # ── 5. Ambient Colors (aurora / neon light blobs, zero dependencies) ───────────
@@ -232,7 +228,7 @@ class AmbientColorVeil(VeilBase):
     def on_hide(self):
         self._timer.stop()
 
-    def paint(self, painter, full_rect, selection_rects, opacity, color):
+    def paint(self, painter, full_rect, selection_rects, opacity, color, selection_shape="rectangle"):
         w, h, t = full_rect.width(), full_rect.height(), self._t
 
         # Dark base so the colors read as light rather than as a tint
@@ -268,7 +264,7 @@ class AmbientColorVeil(VeilBase):
             painter.fillRect(full_rect, grad)
         painter.restore()
 
-        _clear_holes(painter, selection_rects)
+        _clear_holes(painter, selection_rects, selection_shape)
         
 # ── 6. Dark Ambient Colors (aurora / neon light blobs, zero dependencies) ───────────
 
@@ -291,7 +287,7 @@ class DarkAmbientColorVeil(VeilBase):
     def on_hide(self):
         self._timer.stop()
 
-    def paint(self, painter, full_rect, selection_rects, opacity, color):
+    def paint(self, painter, full_rect, selection_rects, opacity, color, selection_shape="rectangle"):
         w, h, t = full_rect.width(), full_rect.height(), self._t
 
         # Slightly lighter background (shifted from 5,5,8 to 20,20,25)
@@ -324,7 +320,7 @@ class DarkAmbientColorVeil(VeilBase):
             painter.fillRect(full_rect, grad)
         painter.restore()
 
-        _clear_holes(painter, selection_rects)
+        _clear_holes(painter, selection_rects, selection_shape)
 
 # ── Registry / factory ────────────────────────────────────────────────────────
 
