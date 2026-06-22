@@ -1,10 +1,12 @@
-name: Build Windows Executable
+name: Build and Release Windows Executable
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    tags:
+      - 'v*' # Triggers the build whenever you push a tag like v1.0, v1.1, etc.
+
+permissions:
+  contents: write # Gives GitHub permission to create a release and upload files
 
 jobs:
   build:
@@ -28,8 +30,10 @@ jobs:
       run: |
         pyinstaller --noconsole --onefile --icon=icon.ico --add-data "icon.ico;." --add-data "*.mp3;." --add-data "*.wav;." --add-data "*.gif;." dmod.py
 
-    - name: Upload Finished EXE to GitHub Assets
-      uses: actions/upload-artifact@v4
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
       with:
-        name: DMod-Windows-Executable
-        path: dist/dmod.exe
+        files: dist/dmod.exe
+        name: Release ${{ github.ref_name }}
+        draft: false
+        prerelease: false
