@@ -232,6 +232,7 @@ class MouseLogic:
         self._last_mouse_x = 0
         self._last_mouse_y = 0
         self._lock = threading.Lock()
+        self.on_wrap = None  # Setup an explicit placeholder for the sound trigger
 
     def begin_update(self):
         with self._lock:
@@ -287,6 +288,11 @@ class MouseLogic:
             new_y = cursor_y
             if not self.options.jump and not wrap.rect.contains(new_x, new_y):
                 return None
+                
+            # Trigger the sound logic right before the cursor wrap takes effect
+            if hasattr(self, 'on_wrap') and self.on_wrap:
+                self.on_wrap()
+                
             return wrap.rect.closest_boundary(new_x, new_y)
 
         return None

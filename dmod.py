@@ -332,6 +332,9 @@ class AppController(QObject):
         self.mus_options.set_wrap(self.settings.value("wrap_mouse", False, type=bool))
 
         self.mus_logic = mus.MouseLogic(self.mus_options)
+        # Hook up a callback for wrapping events
+        self.mus_logic.on_wrap = lambda: play_sound("wrap.mp3")
+
         mus._rebuild_displays(self.mus_logic)
 
         self.mus_hook = mus.MouseHook(self.mus_logic)
@@ -373,32 +376,60 @@ class AppController(QObject):
             return
         import time as _time
 
-        # Use a fresh WinDLL handle with its own argtypes so we never
-        # clobber the declarations mus.py has set on winutils.user32.
         _u32 = ctypes.WinDLL("user32", use_last_error=True)
         _u32.WindowFromPoint.restype = ctypes.c_void_p
         _u32.GetClassNameW.restype   = ctypes.c_int
+        _u32.GetAncestor.restype     = ctypes.c_void_p
+        _u32.GetAncestor.argtypes    = [ctypes.c_void_p, ctypes.c_uint]
+        
+        _u32.FindWindowW.argtypes    = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        _u32.FindWindowW.restype     = ctypes.c_void_p
+        _u32.FindWindowExW.argtypes  = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
+        _u32.FindWindowExW.restype   = ctypes.c_void_p
+        _u32.SendMessageW.argtypes   = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+        _u32.SendMessageW.restype    = ctypes.c_ssize_t
 
         self._last_click_time = 0.0
         DOUBLE_CLICK_THRESHOLD = 0.4
 
-        def _class_at(x, y):
-            # WindowFromPoint takes a POINT (two 32-bit ints packed into 64 bits).
-            pt = ctypes.c_longlong((int(y) << 32) | (int(x) & 0xFFFFFFFF))
-            hwnd = _u32.WindowFromPoint(pt)
-            if not hwnd:
-                return ""
-            buf = ctypes.create_unicode_buffer(256)
-            _u32.GetClassNameW(hwnd, buf, 256)
-            return buf.value
+        def get_desktop_listview():
+            progman = _u32.FindWindowW("Progman", None)
+            shell_view = _u32.FindWindowExW(progman, 0, "SHELLDLL_DefView", None)
+            if not shell_view:
+                workerw = 0
+                while True:
+                    workerw = _u32.FindWindowExW(0, workerw, "WorkerW", None)
+                    if not workerw:
+                        break
+                    shell_view = _u32.FindWindowExW(workerw, 0, "SHELLDLL_DefView", None)
+                    if shell_view:
+                        break
+            if shell_view:
+                return _u32.FindWindowExW(shell_view, 0, "SysListView32", None)
+            return 0
 
         def on_click(x, y, button, pressed):
             if pressed and button == pynput_mouse.Button.left:
                 now = _time.time()
                 if now - self._last_click_time < DOUBLE_CLICK_THRESHOLD:
-                    cls = _class_at(x, y)
-                    if cls in ("WorkerW", "Progman", "SysListView32", "SHELLDLL_DefView"):
-                        winutils.toggle_desktop_icons()
+                    pt = ctypes.c_longlong((int(y) << 32) | (int(x) & 0xFFFFFFFF))
+                    hwnd = _u32.WindowFromPoint(pt)
+                    
+                    if hwnd:
+                        root = _u32.GetAncestor(hwnd, 2) # GA_ROOT = 2
+                        buf = ctypes.create_unicode_buffer(256)
+                        _u32.GetClassNameW(root, buf, 256)
+                        cls = buf.value
+                        
+                        if cls in ("Progman", "WorkerW"):
+                            lv_hwnd = get_desktop_listview()
+                            if lv_hwnd:
+                                # Send LVM_GETSELECTEDCOUNT (0x1032)
+                                selected_count = _u32.SendMessageW(lv_hwnd, 0x1032, 0, 0)
+                                # 0 selected items strictly means empty workspace space was double-clicked
+                                if selected_count == 0:
+                                    winutils.toggle_desktop_icons()
+                                    play_sound("hide.mp3")
                     self._last_click_time = 0.0
                 else:
                     self._last_click_time = now
@@ -437,6 +468,11 @@ class AppController(QObject):
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
+
+    def setup_tray(self):
+        self.tray_icon = QSystemTrayIcon()
+        self.tray_icon.setIcon(QIcon(os.path.join(SCRIPT_DIR, "icon.ico")))
+        self.tray_icon.setToolTip("DMod")
 
     def setup_tray(self):
         self.tray_icon = QSystemTrayIcon()
