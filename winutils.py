@@ -69,6 +69,56 @@ def toggle_always_on_top(hwnd=None):
     )
     return not is_topmost
 
+def toggle_desktop_icons():
+    """
+    Toggles desktop icon visibility by showing/hiding the SysListView32
+    owned by SHELLDLL_DefView under the desktop WorkerW.
+    """
+    user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.FindWindowExW.restype  = wintypes.HWND
+    user32.GetWindow.argtypes     = [wintypes.HWND, ctypes.c_uint]
+    user32.GetWindow.restype      = wintypes.HWND
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype  = wintypes.BOOL
+    user32.ShowWindow.argtypes    = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype     = wintypes.BOOL
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype  = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype  = ctypes.c_int
+
+    GW_CHILD = 5
+    SW_HIDE  = 0
+    SW_SHOW  = 5
+
+    def _get_class(hwnd):
+        b = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, b, 256)
+        return b.value
+
+    def _get_title(hwnd):
+        b = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, b, 256)
+        return b.value
+
+    hwnd = 0
+    while True:
+        hwnd = user32.FindWindowExW(0, hwnd, "WorkerW", None)
+        if not hwnd:
+            break
+        h_def = user32.GetWindow(hwnd, GW_CHILD)
+        if not h_def or _get_class(h_def) != "SHELLDLL_DefView":
+            continue
+        h_lv = user32.GetWindow(h_def, GW_CHILD)
+        if not h_lv or _get_class(h_lv) != "SysListView32" or _get_title(h_lv) != "FolderView":
+            continue
+        if user32.IsWindowVisible(h_lv):
+            user32.ShowWindow(h_lv, SW_HIDE)
+        else:
+            user32.ShowWindow(h_lv, SW_SHOW)
+        return
+
+
 def is_admin():
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())

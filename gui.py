@@ -1,13 +1,12 @@
 """
 gui.py – The DMod settings panel and hotkey-capture dialog.
-Kept separate from dmod.py so the core app logic stays uncluttered,
-mirroring the existing veil.py split.
+Forced to use Fusion style to completely isolate styling from Windows system themes.
 """
 
 import winutils
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
-    QLabel, QPushButton, QComboBox, QSlider, QSpinBox, QColorDialog, QCheckBox
+    QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QPushButton, QComboBox, QSlider, QSpinBox, QColorDialog, QCheckBox, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from pynput import keyboard
@@ -15,65 +14,155 @@ from pynput import keyboard
 from veil import VEIL_LABELS
 from shapes import SELECTION_SHAPE_LABELS
 
+# ── Modern Dashboard CSS ───────────────────────────────────────────────────
 
 STYLE_SHEET = """
 QWidget {
-    background-color: #1b1d23;
-    color: #e7e9ee;
-    font-family: 'Segoe UI', sans-serif;
+    background-color: #121318;
+    color: #e2e4e9;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 13px;
 }
-QGroupBox {
-    border: 1px solid #32353e;
+
+/* Clear background fixes for system-forced text styling */
+QLabel {
+    background-color: transparent;
+}
+
+/* Dashboard Cards */
+QFrame#card {
+    background-color: #1a1c23;
+    border: 1px solid #2a2c36;
     border-radius: 8px;
-    margin-top: 14px;
-    padding: 14px 10px 10px 10px;
-    font-weight: 600;
 }
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 6px;
-    color: #9aa0ad;
+
+QLabel#header {
+    font-size: 16px;
+    font-weight: bold;
+    color: #ffffff;
+    margin-bottom: 5px;
+    background-color: transparent;
 }
-QPushButton {
-    background-color: #2a2d36;
-    border: 1px solid #3a3e4a;
+
+QLabel#mutedText {
+    color: #8b92a5;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QLabel#hotkeyText {
+    color: #4d8df0;
+    font-family: monospace;
+    font-size: 14px;
+    font-weight: bold;
+    background-color: transparent;
+}
+
+/* ComboBox with Arrow Indicator */
+QComboBox {
+    background-color: #121318;
+    border: 1px solid #2a2c36;
     border-radius: 5px;
-    padding: 5px 12px;
+    padding: 6px 30px 6px 10px;
+    color: #e2e4e9;
+}
+QComboBox:hover {
+    border-color: #4d8df0;
+}
+QComboBox::drop-down {
+    border-left: 1px solid #2a2c36;
+    width: 28px;
+    border-top-right-radius: 5px;
+    border-bottom-right-radius: 5px;
+    background-color: #1a1c23;
+}
+QComboBox::down-arrow {
+    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAICAYAAADN5B7xAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAAAh0lEQVQYV2NkgIL/DAwMAjA+TAxEgBGI7YHYE4g1oJz/UBUgE2DiIHEmKGsGxB/RFWFThEsRQxHMdSh+RFeEzw5kMWwKMHkRKsCmiKkQpgbdf2T1yOqR1SD7H1k9unvR1WNTQFAEdym6YmziMBXkugWnApBfkNWj60NXj80A3HZhU4RNERwAAM5bJq2O7k0eAAAAAElFTkSuQmCC);
+    width: 12px;
+    height: 8px;
+}
+QComboBox QAbstractItemView {
+    background-color: #1a1c23;
+    border: 1px solid #2a2c36;
+    selection-background-color: #4d8df0;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #2a2c36;
+    border: 1px solid #363945;
+    border-radius: 6px;
+    padding: 6px 14px;
+    color: #e2e4e9;
+    font-weight: bold;
 }
 QPushButton:hover {
-    background-color: #323641;
+    background-color: #313440;
     border-color: #4d8df0;
 }
 QPushButton:pressed {
-    background-color: #232630;
+    background-color: #121318;
+    border-color: #366ac7;
 }
-QComboBox, QSpinBox {
-    background-color: #232630;
-    border: 1px solid #3a3e4a;
-    border-radius: 5px;
-    padding: 3px 6px;
+
+/* Clear, High-Contrast Action Button for Admin Escalation */
+QPushButton#primaryBtn {
+    background-color: #b45309;
+    border: 1px solid #d97706;
+    color: #ffffff;
 }
-QLabel#hotkeyValue {
-    color: #7fd1ff;
-    font-weight: 600;
+QPushButton#primaryBtn:hover {
+    background-color: #d97706;
+    border-color: #f59e0b;
+}
+QPushButton#primaryBtn:pressed {
+    background-color: #78350f;
+}
+
+/* Bulletproof Standard Base64 Toggle Switches */
+QCheckBox {
+    background-color: transparent;
+    spacing: 12px;
+}
+QCheckBox::indicator {
+    width: 44px;
+    height: 22px;
+    border-radius: 11px;
+}
+QCheckBox::indicator:unchecked {
+    background-color: #2a2c36;
+    border: 1px solid #363945;
+    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAWCAYAAACFp9SgAAAACXBIWXMAAAsTAAALEwEAmpwYAAABXklEQVR4nO2WsU0DQRBFHz0gREgIiYgMREgN0AEF0AAdUIdRE6gBOnAMg0gIkZAhw9gInmNZv9bZIn0S08v+v5mdfzU6nefzhI3wE7YVbAVbwVawFWwFW\n+FWsBVshX/D7b7C9IAtYVvDdrAdZOfE+xKOfYw/BdkFsjvkPcC9wV7gA8g2keXEvQCvQLYFr6Y8Z/uAH8BrX7wFwB7wXj9fNfEqSgO87wWwM\n+K1gM8S39fEDfIesFfNdwK86ZfXv9P9wXbHw4T6T/oT7vL/fE8V9838WvAIskt9N/NrwL3wA8iuifcjXp35vWAnvCHf0zI/FmS7wE79/mbyY\n0GWDWyT+VjCzWb6V+XHgCwb2CrzsYTvNfG1YFfIrpEn6Z/5Xb8D3pP2MvGtiTe9mG69mU/S6R9b9zKfnvW/XvD/uT9/X3B7wVawFWwFW\n8FWsBVsBVvBf8IvaNfOfU9YVfIAAAAASUVORK5CYII=);
+}
+QCheckBox::indicator:checked {
+    background-color: #4d8df0;
+    border: 1px solid #4d8df0;
+    image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAWCAYAAACFp9SgAAAACXBIWXMAAAsTAAALEwEAmpwYAAABYElEQVR4nO2WvU0DQRBFX6wIiRCRgMhEhNQAHSAdUAd0gDqMmECN0IFjGERCiIRESBgbwfMs69c6W6RPYnrZ/za7869GJxOPhK3wE7YVbAVbwVawFW\n8FWsBVshX/D7b7B5IApYVvDdrAdZOXE2xKOXYw/BtkZsivkHcAdwV7gA8g2keXEvQCvQLYFr6Y4R9uAb8CzX7wFwBZw3V9fFPEo8gS\n86wKwHeJpAe9FvC+JLeIO2C6bZwK86pfHv9LtwXa7nUnsnfgvOPX/6U7XmHfxS/5vD9m5fjfza8Ad8APInon3LVyd8K1gRbwR78mZHws\nyWpAn6XN25MeCLC0skvxYwhUzvSnzY0EWC8wzH0vYMs/XxFXIjpHH6Vn6Wz/VN8Cz07YmPhVxzYvp0ps5pZPfs3Uv886z/NML/g/35\n88LtldsBVvBVrAVbAVbwVawFfwnvAEz8M7O0qF89gAAAABJRU5ErkJggg==);
+}
+
+/* Opacity Slider Track & Top Bounds Cutoff Fix */
+QSlider {
+    min-height: 30px;
+    background-color: transparent;
 }
 QSlider::groove:horizontal {
-    height: 4px;
-    background: #32353e;
-    border-radius: 2px;
+    height: 6px;
+    background: #2a2c36;
+    border-radius: 3px;
 }
 QSlider::handle:horizontal {
     background: #4d8df0;
-    width: 14px;
-    margin: -6px 0;
-    border-radius: 7px;
+    width: 16px;
+    height: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}
+QSlider::handle:horizontal:hover {
+    background: #ffffff;
 }
 """
 
-
-# ── Hotkey capture dialog ───────────────────────────────────────────────────
+# ── Hotkey Capture Dialog ───────────────────────────────────────────────────
 
 class HotkeyCaptureDialog(QDialog):
     _modifiers_updated = pyqtSignal(str)
@@ -81,17 +170,18 @@ class HotkeyCaptureDialog(QDialog):
     _cancelled = pyqtSignal()
 
     _MODIFIER_TOKENS = {
-        keyboard.Key.ctrl_l: "<ctrl>",  keyboard.Key.ctrl_r: "<ctrl>",
-        keyboard.Key.alt_l: "<alt>",    keyboard.Key.alt_r: "<alt>",
-        keyboard.Key.shift_l: "<shift>", keyboard.Key.shift_r: "<shift>",
-        keyboard.Key.cmd_l: "<cmd>",    keyboard.Key.cmd_r: "<cmd>",
+        keyboard.Key.ctrl_l: "<CTRL>",  keyboard.Key.ctrl_r: "<CTRL>",
+        keyboard.Key.alt_l: "<ALT>",    keyboard.Key.alt_r: "<ALT>",
+        keyboard.Key.shift_l: "<SHIFT>", keyboard.Key.shift_r: "<SHIFT>",
+        keyboard.Key.cmd_l: "<CMD>",    keyboard.Key.cmd_r: "<CMD>",
     }
 
     def __init__(self, parent=None, current=""):
         super().__init__(parent)
         self.setWindowTitle("Set Hotkey")
-        self.setFixedSize(360, 150)
+        self.setFixedSize(400, 180)
         self.setModal(True)
+        self.setStyleSheet(STYLE_SHEET)
 
         self.result_hotkey = None
         self._held_modifiers = []
@@ -102,16 +192,16 @@ class HotkeyCaptureDialog(QDialog):
         self._cancelled.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
 
-        prompt = QLabel("Press the desired key combination…\n(Esc to cancel)")
+        prompt = QLabel("Listening for keystrokes...\nPress Esc to cancel.")
         prompt.setAlignment(Qt.AlignCenter)
-        prompt.setWordWrap(True)
+        prompt.setObjectName("mutedText")
         layout.addWidget(prompt)
 
-        self.preview = QLabel(current or " ")
+        self.preview = QLabel(current.upper() or " ")
         self.preview.setAlignment(Qt.AlignCenter)
-        self.preview.setStyleSheet("font-size: 18px; font-weight: 600; color: #7fd1ff;")
+        self.preview.setStyleSheet("font-size: 22px; font-weight: bold; color: #ffffff; background: #1a1c23; border: 1px solid #4d8df0; border-radius: 8px; padding: 12px;")
         layout.addWidget(self.preview)
 
         cancel_btn = QPushButton("Cancel")
@@ -128,7 +218,6 @@ class HotkeyCaptureDialog(QDialog):
 
     def _start_listener(self):
         self._held_modifiers = []
-
         def on_press(key):
             if key == keyboard.Key.esc:
                 self._cancelled.emit()
@@ -141,7 +230,7 @@ class HotkeyCaptureDialog(QDialog):
             else:
                 token = self._key_to_token(key)
                 if token:
-                    combo = "+".join(self._held_modifiers + [token])
+                    combo = "+".join(self._held_modifiers + [token.upper()])
                     self._combo_finished.emit(combo)
 
         self._listener = keyboard.Listener(on_press=on_press)
@@ -155,7 +244,7 @@ class HotkeyCaptureDialog(QDialog):
     def _key_to_token(self, key):
         try:
             if hasattr(key, "char") and key.char is not None:
-                return key.char.lower()
+                return key.char
             name = str(key).replace("Key.", "")
             return f"<{name}>"
         except Exception:
@@ -166,199 +255,187 @@ class HotkeyCaptureDialog(QDialog):
 
     def _on_combo_finished(self, combo):
         self._stop_listener()
-        self.result_hotkey = combo
-        self.preview.setText(combo)
+        self.result_hotkey = combo.upper()
+        self.preview.setText(self.result_hotkey)
         self.accept()
 
 
-# ── Settings window ─────────────────────────────────────────────────────────
+# ── Main Settings Window ────────────────────────────────────────────────────
 
 class SettingsWindow(QWidget):
     def __init__(self, controller):
+        # Explicitly force Fusion style to bypass Windows theme engine contamination
+        if QApplication.instance():
+            QApplication.instance().setStyle('Fusion')
+            
         super().__init__()
         self.controller = controller
         self.overlay = controller.overlay
         self.hotkey_mgr = controller.hotkey_mgr
 
-        self.setWindowTitle("DMod — Settings")
-        self.setFixedWidth(420)
+        self.setWindowTitle("DMod Settings")
+        self.setFixedSize(1240, 380) # Ample scale prevents text cutoff across monitors
         self.setStyleSheet(STYLE_SHEET)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(18)
-        root.addWidget(self._build_hotkeys_group())
-        root.addWidget(self._build_selection_group())
-        root.addWidget(self._build_veil_group())
-        root.addWidget(self._build_utils_group())
-        root.addWidget(self._build_admin_group())
-        root.addStretch()
-        
-    def _build_admin_group(self):
-        box = QGroupBox("Admin Access")
-        layout = QVBoxLayout(box)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
 
-        if winutils.is_admin():
-            status = QLabel("Already running as Administrator — Always On Top works on any window.")
-            status.setWordWrap(True)
-            layout.addWidget(status)
-        else:
-            info = QLabel("Some windows (elevated games, admin tools) need this app running as "
-                          "Administrator for Always On Top to affect them.")
-            info.setWordWrap(True)
-            layout.addWidget(info)
-            btn = QPushButton("Restart as Administrator")
-            btn.clicked.connect(self._on_relaunch_admin)
-            layout.addWidget(btn)
+        main_layout.addWidget(self._build_col_hotkeys(), 1)
+        main_layout.addWidget(self._build_col_veil(), 1)
+        main_layout.addWidget(self._build_col_system(), 1)
 
-        return box
+    def _build_col_hotkeys(self):
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-    def _on_relaunch_admin(self):
-        winutils.relaunch_as_admin()
-        QApplication.instance().quit()
+        header = QLabel("Keybinds")
+        header.setObjectName("header")
+        layout.addWidget(header)
+        layout.addSpacing(10)
 
-    # ---- Hotkeys group ------------------------------------------------------
+        grid = QGridLayout()
+        grid.setVerticalSpacing(20)
+        grid.setHorizontalSpacing(15)
 
-    def _build_hotkeys_group(self):
-        box = QGroupBox("Hotkeys")
-        grid = QGridLayout(box)
-        grid.setVerticalSpacing(10)
-        grid.setColumnStretch(1, 1)
-
-        self.main_hotkey_label = QLabel(self.hotkey_mgr.primary_str)
-        self.pause_hotkey_label = QLabel(self.hotkey_mgr.secondary_str)
-        self.cursorlock_hotkey_label = QLabel(self.hotkey_mgr.cursorlock_str)
-        self.aot_hotkey_label = QLabel(self.hotkey_mgr.aot_str)
+        self.main_hotkey_label = QLabel(self.hotkey_mgr.primary_str.upper())
+        self.pause_hotkey_label = QLabel(self.hotkey_mgr.secondary_str.upper())
+        self.cursorlock_hotkey_label = QLabel(self.hotkey_mgr.cursorlock_str.upper())
+        self.aot_hotkey_label = QLabel(self.hotkey_mgr.aot_str.upper())
 
         rows = [
-            ("Veil", self.main_hotkey_label, self.hotkey_mgr.set_primary_hotkey),
-            ("Pause / Unpause", self.pause_hotkey_label, self.hotkey_mgr.set_secondary_hotkey),
-            ("Cursor Lock", self.cursorlock_hotkey_label, self.hotkey_mgr.set_cursorlock_hotkey),
-            ("Always On Top", self.aot_hotkey_label, self.hotkey_mgr.set_aot_hotkey),
+            ("Veil", "Hold to select veil.\nOr press once for fullscreen veil.\nPress again to clear.", self.main_hotkey_label, self.hotkey_mgr.set_primary_hotkey),
+            ("Pause", "Pauses and restores veil effects.", self.pause_hotkey_label, self.hotkey_mgr.set_secondary_hotkey),
+            ("Cursor Lock", "Toggles locking the cursor to\n the active window.", self.cursorlock_hotkey_label, self.hotkey_mgr.set_cursorlock_hotkey),
+            ("Always On Top", "Toggles forcing the active\nwindow to always be on top.", self.aot_hotkey_label, self.hotkey_mgr.set_aot_hotkey),
         ]
-        for i, (name, value_label, setter) in enumerate(rows):
-            value_label.setObjectName("hotkeyValue")
-            grid.addWidget(QLabel(name), i, 0)
+
+        for i, (name, subtitle, value_label, setter) in enumerate(rows):
+            lbl_layout = QVBoxLayout()
+            lbl_layout.setSpacing(2)
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet("font-weight: bold;")
+            sub_lbl = QLabel(subtitle)
+            sub_lbl.setObjectName("mutedText")
+            lbl_layout.addWidget(name_lbl)
+            lbl_layout.addWidget(sub_lbl)
+            grid.addLayout(lbl_layout, i, 0)
+
+            value_label.setObjectName("hotkeyText")
+            value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             grid.addWidget(value_label, i, 1)
-            btn = QPushButton("Set…")
+
+            btn = QPushButton("Rebind")
+            btn.setFixedWidth(85)
             btn.clicked.connect(lambda _, lbl=value_label, fn=setter: self._capture_and_apply(lbl, fn))
             grid.addWidget(btn, i, 2)
 
-        return box
+        layout.addLayout(grid)
+        layout.addStretch()
+        return card
 
     def _capture_and_apply(self, label, setter):
         self.hotkey_mgr.pause()
         dlg = HotkeyCaptureDialog(self, current=label.text())
         if dlg.exec_() == QDialog.Accepted and dlg.result_hotkey:
-            setter(dlg.result_hotkey)
-            label.setText(dlg.result_hotkey)
-        else:
-            self.hotkey_mgr.resume()
+            upper_hotkey = dlg.result_hotkey.upper()
+            setter(upper_hotkey)
+            label.setText(upper_hotkey)
+        self.hotkey_mgr.resume()
 
-    # ---- Selection group ----------------------------------------------------
+    def _build_col_veil(self):
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-    def _build_selection_group(self):
-        box = QGroupBox("Selection Tool")
-        layout = QVBoxLayout(box)
-        layout.setSpacing(12)
+        header = QLabel("Veil Appearance")
+        header.setObjectName("header")
+        layout.addWidget(header)
+        layout.addSpacing(10)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Shape"))
-        self.shape_combo = QComboBox()
-        for key, label in SELECTION_SHAPE_LABELS:
-            self.shape_combo.addItem(label, userData=key)
-        idx = self.shape_combo.findData(self.overlay.selection_shape)
-        if idx >= 0:
-            self.shape_combo.setCurrentIndex(idx)
-        self.shape_combo.currentIndexChanged.connect(self._on_selection_shape_changed)
-        row.addWidget(self.shape_combo, 1)
-        layout.addLayout(row)
+        grid = QGridLayout()
+        grid.setVerticalSpacing(15)
+        grid.setHorizontalSpacing(10)
 
-        hint = QLabel("Drag to draw the selected shape. Release the hotkey when finished.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #9aa0ad; font-size: 12px;")
-        layout.addWidget(hint)
-
-        return box
-
-    def _on_selection_shape_changed(self, index):
-        shape = self.shape_combo.itemData(index)
-        self.overlay.set_selection_shape(shape)
-
-    # ---- Veil group -----------------------------------------------------------
-
-    def _build_veil_group(self):
-        box = QGroupBox("Veil")
-        layout = QVBoxLayout(box)
-        layout.setSpacing(12)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Type"))
+        # Dropdowns
+        grid.addWidget(QLabel("Veil Style:"), 0, 0)
         self.veil_combo = QComboBox()
         for key, label in VEIL_LABELS:
             self.veil_combo.addItem(label, userData=key)
         idx = self.veil_combo.findData(self.overlay.veil_type)
-        if idx >= 0:
-            self.veil_combo.setCurrentIndex(idx)
+        if idx >= 0: self.veil_combo.setCurrentIndex(idx)
         self.veil_combo.currentIndexChanged.connect(self._on_veil_type_changed)
-        row.addWidget(self.veil_combo, 1)
-        layout.addLayout(row)
+        grid.addWidget(self.veil_combo, 0, 1)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Color"))
-        self.color_btn = QPushButton()
-        self.color_btn.setFixedSize(60, 24)
+        grid.addWidget(QLabel("Selection Tool:"), 1, 0)
+        self.shape_combo = QComboBox()
+        for key, label in SELECTION_SHAPE_LABELS:
+            self.shape_combo.addItem(label, userData=key)
+        idx = self.shape_combo.findData(self.overlay.selection_shape)
+        if idx >= 0: self.shape_combo.setCurrentIndex(idx)
+        self.shape_combo.currentIndexChanged.connect(self._on_selection_shape_changed)
+        grid.addWidget(self.shape_combo, 1, 1)
+
+        # Base Tint & Swatch
+        grid.addWidget(QLabel("Base Color:"), 2, 0, Qt.AlignTop)
+        
+        swatch_layout = QHBoxLayout()
+        self.color_preview = QLabel()
+        self.color_preview.setFixedSize(96, 96) 
         self._update_color_swatch()
-        self.color_btn.clicked.connect(self._on_pick_color)
-        row.addWidget(self.color_btn)
-        row.addStretch()
-        layout.addLayout(row)
+        
+        swatch_controls = QVBoxLayout()
+        self.color_hex = QLabel(self.overlay.veil_color.name().upper())
+        self.color_hex.setStyleSheet("font-family: monospace; color: #8b92a5; font-size: 14px; font-weight: bold;")
+        
+        color_btn = QPushButton("Select Color")
+        color_btn.setMinimumWidth(110)
+        color_btn.clicked.connect(self._on_pick_color)
+        
+        swatch_controls.addWidget(self.color_hex)
+        swatch_controls.addWidget(color_btn)
+        swatch_controls.addStretch()
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Opacity"))
+        swatch_layout.addWidget(self.color_preview)
+        swatch_layout.addSpacing(12)
+        swatch_layout.addLayout(swatch_controls)
+        swatch_layout.addStretch()
+        grid.addLayout(swatch_layout, 2, 1)
+
+        # Opacity
+        grid.addWidget(QLabel("Opacity:"), 3, 0)
+        op_row = QHBoxLayout()
         self.opacity_slider = QSlider(Qt.Horizontal)
         self.opacity_slider.setRange(10, 100)
         self.opacity_slider.setValue(int(self.overlay.target_opacity * 100))
         self.opacity_value_label = QLabel(f"{int(self.overlay.target_opacity * 100)}%")
+        self.opacity_value_label.setFixedWidth(40)
         self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
-        row.addWidget(self.opacity_slider, 1)
-        row.addWidget(self.opacity_value_label)
-        layout.addLayout(row)
+        op_row.addWidget(self.opacity_slider)
+        op_row.addWidget(self.opacity_value_label)
+        grid.addLayout(op_row, 3, 1)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Fade In Delay (ms)"))
-        self.fade_spin = QSpinBox()
-        self.fade_spin.setRange(0, 10000)
-        self.fade_spin.setSingleStep(100)
-        self.fade_spin.setValue(self.overlay.fade_duration)
-        self.fade_spin.valueChanged.connect(self._on_fade_changed)
-        row.addWidget(self.fade_spin)
-        layout.addLayout(row)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Pause Fade Delay (ms)"))
-        self.pause_fade_spin = QSpinBox()
-        self.pause_fade_spin.setRange(0, 10000)
-        self.pause_fade_spin.setSingleStep(100)
-        self.pause_fade_spin.setValue(self.overlay.fade_duration_pause)
-        self.pause_fade_spin.valueChanged.connect(self._on_pause_fade_changed)
-        row.addWidget(self.pause_fade_spin)
-        layout.addLayout(row)
-
-        return box
+        layout.addLayout(grid)
+        layout.addStretch()
+        return card
 
     def _on_veil_type_changed(self, index):
-        key = self.veil_combo.itemData(index)
-        self.overlay.set_veil_type(key)
+        self.overlay.set_veil_type(self.veil_combo.itemData(index))
+
+    def _on_selection_shape_changed(self, index):
+        self.overlay.set_selection_shape(self.shape_combo.itemData(index))
 
     def _update_color_swatch(self):
-        self.color_btn.setStyleSheet(
-            f"background-color: {self.overlay.veil_color.name()}; "
-            f"border: 1px solid #444; border-radius: 4px;"
-        )
+        color_name = self.overlay.veil_color.name()
+        self.color_preview.setStyleSheet(f"background-color: {color_name}; border-radius: 8px; border: 2px solid #363945;")
+        if hasattr(self, 'color_hex'):
+            self.color_hex.setText(color_name.upper())
 
     def _on_pick_color(self):
-        color = QColorDialog.getColor(self.overlay.veil_color, self, "Veil Color")
+        color = QColorDialog.getColor(self.overlay.veil_color, self, "Select Veil Color")
         if color.isValid():
             self.overlay.veil_color = color
             self.overlay.settings.setValue("color", color.name())
@@ -369,33 +446,70 @@ class SettingsWindow(QWidget):
         self.overlay.target_opacity = value / 100.0
         self.overlay.settings.setValue("opacity", self.overlay.target_opacity)
 
-    def _on_fade_changed(self, value):
-        self.overlay.fade_duration = value
-        self.overlay.settings.setValue("delay", value)
+    def _build_col_system(self):
+        card = QFrame()
+        card.setObjectName("card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-    def _on_pause_fade_changed(self, value):
-        self.overlay.fade_duration_pause = value
-        self.overlay.settings.setValue("delay_pause", value)
+        header = QLabel("System Utilities")
+        header.setObjectName("header")
+        layout.addWidget(header)
+        layout.addSpacing(15)
 
-    # ---- Windows Utilities ----------------------------------------------------
+        # Precise text-wrapping layout for utility toggles
+        self.desktop_icons_chk = QCheckBox("Toggle Desktop Icons by Double-Clicking Desktop")
+        self.desktop_icons_chk.setChecked(self.controller.settings.value("desktop_icon_toggle", False, type=bool))
+        self.desktop_icons_chk.stateChanged.connect(lambda state: self.controller.set_desktop_icon_toggle(bool(state)))
+        layout.addWidget(self.desktop_icons_chk)
 
-    def _build_utils_group(self):
-        box = QGroupBox("Windows Utilities")
-        layout = QVBoxLayout(box)
+        layout.addSpacing(12)
 
-        self.unsnag_chk = QCheckBox("Unsnag Mouse in Corners")
+        self.unsnag_chk = QCheckBox("Unsnag Cursor from Monitor Corners")
         self.unsnag_chk.setChecked(self.controller.settings.value("unsnag_mouse", False, type=bool))
         self.unsnag_chk.stateChanged.connect(lambda state: self.controller.set_unsnag(bool(state)))
         layout.addWidget(self.unsnag_chk)
 
-        self.wrap_chk = QCheckBox("Wrap around monitors")
+        layout.addSpacing(12)
+
+        self.wrap_chk = QCheckBox("Wrap Cursor Around Monitors")
         self.wrap_chk.setChecked(self.controller.settings.value("wrap_mouse", False, type=bool))
         self.wrap_chk.stateChanged.connect(lambda state: self.controller.set_wrap(bool(state)))
         layout.addWidget(self.wrap_chk)
 
-        return box
+        layout.addStretch()
 
-    # ---- Window behavior ------------------------------------------------------
+        # Re-engineered Admin Callout
+        admin_frame = QFrame()
+        admin_frame.setStyleSheet("background-color: #121318; border-radius: 6px; border: 1px solid #2a2c36;")
+        admin_layout = QVBoxLayout(admin_frame)
+        admin_layout.setContentsMargins(12, 12, 12, 12)
+
+        if winutils.is_admin():
+            status = QLabel("✓ Administrator Mode Active")
+            status.setStyleSheet("color: #10b981; font-weight: bold; border: none;")
+            status.setAlignment(Qt.AlignCenter)
+            admin_layout.addWidget(status)
+        else:
+            info = QLabel("Limited Mode: Always on top hotkey fails in some apps without running as admin.")
+            info.setObjectName("mutedText")
+            info.setWordWrap(True)
+            info.setStyleSheet("border: none;")
+            info.setAlignment(Qt.AlignCenter)
+            admin_layout.addWidget(info)
+            
+            btn = QPushButton("Restart as Admin")
+            btn.setObjectName("primaryBtn")
+            btn.setMinimumHeight(32)
+            btn.clicked.connect(self._on_relaunch_admin)
+            admin_layout.addWidget(btn)
+
+        layout.addWidget(admin_frame)
+        return card
+
+    def _on_relaunch_admin(self):
+        winutils.relaunch_as_admin()
+        QApplication.instance().quit()
 
     def closeEvent(self, event):
         event.ignore()

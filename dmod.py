@@ -1,11 +1,12 @@
 import sys
 import os
+import ctypes
 import threading
 import pygame
 from PyQt5.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, pyqtProperty, pyqtSignal, QObject, QSettings, QEasingCurve
 from PyQt5.QtGui import QPainter, QColor, QPen, QIcon, QPixmap
-from pynput import keyboard
+from pynput import keyboard, mouse as pynput_mouse
 from veil import get_veil, VEIL_LABELS
 from gui import SettingsWindow
 from shapes import clear_selection_holes, draw_selection_outlines
@@ -346,9 +347,69 @@ class AppController(QObject):
         self.mus_hook_thread.start()
         # ──────────────────────────────────────────
 
+        # ── Desktop icon double-click toggle ──
+        self._desktop_icon_toggle_enabled = self.settings.value("desktop_icon_toggle", False, type=bool)
+        self._last_click_time = 0.0
+        self._mouse_listener = None
+        if self._desktop_icon_toggle_enabled:
+            self._start_desktop_mouse_listener()
+        self.app.aboutToQuit.connect(self._stop_desktop_mouse_listener)
+        # ─────────────────────────────────────
+
         # Pass self so SettingsWindow can access everything
         self.settings_window = SettingsWindow(self)
         self.setup_tray()
+
+    def set_desktop_icon_toggle(self, state: bool):
+        self._desktop_icon_toggle_enabled = state
+        self.settings.setValue("desktop_icon_toggle", state)
+        if state:
+            self._start_desktop_mouse_listener()
+        else:
+            self._stop_desktop_mouse_listener()
+
+    def _start_desktop_mouse_listener(self):
+        if self._mouse_listener is not None:
+            return
+        import time as _time
+
+        # Use a fresh WinDLL handle with its own argtypes so we never
+        # clobber the declarations mus.py has set on winutils.user32.
+        _u32 = ctypes.WinDLL("user32", use_last_error=True)
+        _u32.WindowFromPoint.restype = ctypes.c_void_p
+        _u32.GetClassNameW.restype   = ctypes.c_int
+
+        self._last_click_time = 0.0
+        DOUBLE_CLICK_THRESHOLD = 0.4
+
+        def _class_at(x, y):
+            # WindowFromPoint takes a POINT (two 32-bit ints packed into 64 bits).
+            pt = ctypes.c_longlong((int(y) << 32) | (int(x) & 0xFFFFFFFF))
+            hwnd = _u32.WindowFromPoint(pt)
+            if not hwnd:
+                return ""
+            buf = ctypes.create_unicode_buffer(256)
+            _u32.GetClassNameW(hwnd, buf, 256)
+            return buf.value
+
+        def on_click(x, y, button, pressed):
+            if pressed and button == pynput_mouse.Button.left:
+                now = _time.time()
+                if now - self._last_click_time < DOUBLE_CLICK_THRESHOLD:
+                    cls = _class_at(x, y)
+                    if cls in ("WorkerW", "Progman", "SysListView32", "SHELLDLL_DefView"):
+                        winutils.toggle_desktop_icons()
+                    self._last_click_time = 0.0
+                else:
+                    self._last_click_time = now
+
+        self._mouse_listener = pynput_mouse.Listener(on_click=on_click)
+        self._mouse_listener.start()
+
+    def _stop_desktop_mouse_listener(self):
+        if self._mouse_listener is not None:
+            self._mouse_listener.stop()
+            self._mouse_listener = None
 
     def set_unsnag(self, state: bool):
         self.mus_options.set_unsnag(state)
