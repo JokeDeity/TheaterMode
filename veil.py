@@ -12,6 +12,8 @@ import math
 import os
 import random
 
+from veils_base import VeilBase, _clear_holes
+from gpu_veils import ShaderWavesVeil
 from PyQt5.QtCore import Qt, QTimer, QRect, QPointF
 from PyQt5.QtGui import QPainter, QColor, QPixmap, QMovie, QRadialGradient, QLinearGradient, QPainterPath, QFont
 
@@ -975,6 +977,7 @@ VEIL_LABELS = [
     ("flat", "Flat Color"),
     ("color", "Ambient Color"),
     ("darkcolor", "Dark Ambient"),
+    ("wave", "Wave"),
     ("waves", "Waves"),
     ("waves2", "Waves 2"),
     ("linewaves", "Line Waves"),
@@ -992,11 +995,12 @@ VEIL_LABELS = [
 ]
 
 _REGISTRY = {
-    "flat": lambda: FlatColorVeil(),
-    "color": lambda: AmbientColorVeil(),
+    "flat":      lambda: FlatColorVeil(),
+    "color":     lambda: AmbientColorVeil(),
     "darkcolor": lambda: DarkAmbientColorVeil(),
-    "waves": lambda: WavesVeil(),
-    "waves2": lambda: Waves2Veil(),
+    "wave":      lambda: ShaderWavesVeil(), # GPU version
+    "waves":     lambda: WavesVeil(),       # CPU version
+    "waves2":    lambda: Waves2Veil(),
     "linewaves": lambda: LineWavesVeil(),
     "starfield": lambda: StarfieldVeil(),
     "constellation": lambda: ConstellationVeil(),
