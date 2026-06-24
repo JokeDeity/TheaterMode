@@ -7,7 +7,7 @@ mirroring the existing veil.py split.
 import winutils
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
-    QLabel, QPushButton, QComboBox, QSlider, QSpinBox, QColorDialog
+    QLabel, QPushButton, QComboBox, QSlider, QSpinBox, QColorDialog, QCheckBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from pynput import keyboard
@@ -76,12 +76,6 @@ QSlider::handle:horizontal {
 # ── Hotkey capture dialog ───────────────────────────────────────────────────
 
 class HotkeyCaptureDialog(QDialog):
-    """
-    Modal dialog that records a key combination by running a temporary
-    pynput listener (separate from the app's main global listener) and
-    returns it as a pynput hotkey string, e.g. '<ctrl>+<shift>+f3'.
-    """
-
     _modifiers_updated = pyqtSignal(str)
     _combo_finished = pyqtSignal(str)
     _cancelled = pyqtSignal()
@@ -150,9 +144,6 @@ class HotkeyCaptureDialog(QDialog):
                     combo = "+".join(self._held_modifiers + [token])
                     self._combo_finished.emit(combo)
 
-        # Separate listener instance from the app's global one – the
-        # caller is responsible for pausing the global listener so the
-        # combo being typed doesn't also fire an existing hotkey.
         self._listener = keyboard.Listener(on_press=on_press)
         self._listener.start()
 
@@ -183,12 +174,11 @@ class HotkeyCaptureDialog(QDialog):
 # ── Settings window ─────────────────────────────────────────────────────────
 
 class SettingsWindow(QWidget):
-    """Sleek, lightweight settings panel covering every option in one place."""
-
-    def __init__(self, overlay, hotkey_mgr):
+    def __init__(self, controller):
         super().__init__()
-        self.overlay = overlay
-        self.hotkey_mgr = hotkey_mgr
+        self.controller = controller
+        self.overlay = controller.overlay
+        self.hotkey_mgr = controller.hotkey_mgr
 
         self.setWindowTitle("DMod — Settings")
         self.setFixedWidth(420)
@@ -200,6 +190,7 @@ class SettingsWindow(QWidget):
         root.addWidget(self._build_hotkeys_group())
         root.addWidget(self._build_selection_group())
         root.addWidget(self._build_veil_group())
+        root.addWidget(self._build_utils_group())
         root.addWidget(self._build_admin_group())
         root.addStretch()
         
@@ -256,12 +247,10 @@ class SettingsWindow(QWidget):
         return box
 
     def _capture_and_apply(self, label, setter):
-        # Pause the global listener so the combo being recorded doesn't
-        # also trigger an existing hotkey while it's being typed.
         self.hotkey_mgr.pause()
         dlg = HotkeyCaptureDialog(self, current=label.text())
         if dlg.exec_() == QDialog.Accepted and dlg.result_hotkey:
-            setter(dlg.result_hotkey)   # internally restarts the listener
+            setter(dlg.result_hotkey)
             label.setText(dlg.result_hotkey)
         else:
             self.hotkey_mgr.resume()
@@ -303,7 +292,6 @@ class SettingsWindow(QWidget):
         layout = QVBoxLayout(box)
         layout.setSpacing(12)
 
-        # Veil type
         row = QHBoxLayout()
         row.addWidget(QLabel("Type"))
         self.veil_combo = QComboBox()
@@ -316,7 +304,6 @@ class SettingsWindow(QWidget):
         row.addWidget(self.veil_combo, 1)
         layout.addLayout(row)
 
-        # Color swatch (used by Flat Color)
         row = QHBoxLayout()
         row.addWidget(QLabel("Color"))
         self.color_btn = QPushButton()
@@ -327,7 +314,6 @@ class SettingsWindow(QWidget):
         row.addStretch()
         layout.addLayout(row)
 
-        # Opacity
         row = QHBoxLayout()
         row.addWidget(QLabel("Opacity"))
         self.opacity_slider = QSlider(Qt.Horizontal)
@@ -339,7 +325,6 @@ class SettingsWindow(QWidget):
         row.addWidget(self.opacity_value_label)
         layout.addLayout(row)
 
-        # Fade delay
         row = QHBoxLayout()
         row.addWidget(QLabel("Fade In Delay (ms)"))
         self.fade_spin = QSpinBox()
@@ -350,7 +335,6 @@ class SettingsWindow(QWidget):
         row.addWidget(self.fade_spin)
         layout.addLayout(row)
 
-        # Pause fade delay
         row = QHBoxLayout()
         row.addWidget(QLabel("Pause Fade Delay (ms)"))
         self.pause_fade_spin = QSpinBox()
@@ -393,10 +377,26 @@ class SettingsWindow(QWidget):
         self.overlay.fade_duration_pause = value
         self.overlay.settings.setValue("delay_pause", value)
 
+    # ---- Windows Utilities ----------------------------------------------------
+
+    def _build_utils_group(self):
+        box = QGroupBox("Windows Utilities")
+        layout = QVBoxLayout(box)
+
+        self.unsnag_chk = QCheckBox("Unsnag Mouse in Corners")
+        self.unsnag_chk.setChecked(self.controller.settings.value("unsnag_mouse", False, type=bool))
+        self.unsnag_chk.stateChanged.connect(lambda state: self.controller.set_unsnag(bool(state)))
+        layout.addWidget(self.unsnag_chk)
+
+        self.wrap_chk = QCheckBox("Wrap around monitors")
+        self.wrap_chk.setChecked(self.controller.settings.value("wrap_mouse", False, type=bool))
+        self.wrap_chk.stateChanged.connect(lambda state: self.controller.set_wrap(bool(state)))
+        layout.addWidget(self.wrap_chk)
+
+        return box
+
     # ---- Window behavior ------------------------------------------------------
 
     def closeEvent(self, event):
-        # Hide rather than destroy so re-opening from the tray is instant
-        # and doesn't rebuild the whole panel.
         event.ignore()
         self.hide()

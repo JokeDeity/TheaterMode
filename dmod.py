@@ -1,5 +1,6 @@
 import sys
 import os
+import threading
 import pygame
 from PyQt5.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QMenu
 from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, pyqtProperty, pyqtSignal, QObject, QSettings, QEasingCurve
@@ -9,6 +10,7 @@ from veil import get_veil, VEIL_LABELS
 from gui import SettingsWindow
 from shapes import clear_selection_holes, draw_selection_outlines
 import winutils
+import mus
 
 # ── Sound setup ──────────────────────────────────────────────────────────────
 pygame.mixer.init()
@@ -73,9 +75,6 @@ class HotkeyManager(QObject):
             try:
                 canonical_key = self.listener.canonical(key)
 
-                # Windows re-sends "key down" repeatedly while a key is held.
-                # pynput's HotKey doesn't dedupe that, so without this guard
-                # a hotkey can re-fire multiple times from one physical press.
                 if canonical_key in self._held_keys:
                     return
                 self._held_keys.add(canonical_key)
@@ -98,7 +97,6 @@ class HotkeyManager(QObject):
                 self.aot_hk.release(canonical_key)
 
                 if self.primary_active:
-                    # If any key making up the primary combo is released, trigger the release event
                     if key in self.primary_keys or canonical_key in self.primary_keys:
                         self.primary_active = False
                         self.primary_released.emit()
@@ -109,13 +107,11 @@ class HotkeyManager(QObject):
         self.listener.start()
 
     def pause(self):
-        """Temporarily stops the global listener (used while capturing a new hotkey)."""
         if self.listener:
             self.listener.stop()
             self.listener = None
 
     def resume(self):
-        """Restarts the global listener after a pause() with no changes."""
         self.start_listener()
 
     def set_primary_hotkey(self, primary):
@@ -167,7 +163,6 @@ class TheaterOverlay(QWidget):
         self.anim.setEasingCurve(QEasingCurve.InOutQuad)
 
     def set_veil_type(self, new_type):
-        """Swaps the active veil renderer."""
         if self.state != 'hidden':
             self.veil.on_hide()
             
@@ -206,7 +201,7 @@ class TheaterOverlay(QWidget):
             self.start_selection()
         elif self.state in ('theater', 'paused'):
             play_sound("Clear.mp3")
-            self.state = 'hiding' # Prevent the upcoming release from triggering a fade-in
+            self.state = 'hiding' 
             self.fade_to(0.0, 300, callback=self.reset_and_hide)
 
     def on_primary_released(self):
@@ -316,6 +311,7 @@ class AppController(QObject):
     def __init__(self, app):
         super().__init__()
         self.app = app
+        self.settings = QSettings("TheaterMode", "Settings")
         self.overlay = TheaterOverlay()
         self.hotkey_mgr = HotkeyManager()
         self.cursor_locked = False
@@ -326,13 +322,41 @@ class AppController(QObject):
         self.hotkey_mgr.cursorlock_triggered.connect(self.toggle_cursor_lock)
         self.hotkey_mgr.aot_triggered.connect(self.toggle_always_on_top)
 
-        # Safety net: always release any active cursor clip on exit,
-        # mirroring the OnExit handler in the original AHK script.
+        # Safety nets for app exit
         self.app.aboutToQuit.connect(winutils.release_cursor_lock)
+        
+        # ── Initialize MouseUnSnag logic natively ──
+        self.mus_options = mus.Options()
+        self.mus_options.set_unsnag(self.settings.value("unsnag_mouse", False, type=bool))
+        self.mus_options.set_wrap(self.settings.value("wrap_mouse", False, type=bool))
 
-        self.settings_window = SettingsWindow(self.overlay, self.hotkey_mgr)
+        self.mus_logic = mus.MouseLogic(self.mus_options)
+        mus._rebuild_displays(self.mus_logic)
 
+        self.mus_hook = mus.MouseHook(self.mus_logic)
+        self.mus_hook.install()
+        self.app.aboutToQuit.connect(self.mus_hook.uninstall)
+
+        self.mus_watcher_thread = threading.Thread(
+            target=mus._start_display_change_watcher, args=(self.mus_logic,), daemon=True
+        )
+        self.mus_watcher_thread.start()
+
+        self.mus_hook_thread = threading.Thread(target=self.mus_hook.pump, daemon=True)
+        self.mus_hook_thread.start()
+        # ──────────────────────────────────────────
+
+        # Pass self so SettingsWindow can access everything
+        self.settings_window = SettingsWindow(self)
         self.setup_tray()
+
+    def set_unsnag(self, state: bool):
+        self.mus_options.set_unsnag(state)
+        self.settings.setValue("unsnag_mouse", state)
+
+    def set_wrap(self, state: bool):
+        self.mus_options.set_wrap(state)
+        self.settings.setValue("wrap_mouse", state)
 
     def toggle_cursor_lock(self):
         play_sound("Cursorlock.wav")
@@ -370,8 +394,6 @@ class AppController(QObject):
     def _on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self.show_settings()
-
-
 
 
 if __name__ == '__main__':

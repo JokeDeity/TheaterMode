@@ -3,10 +3,10 @@ name: Build and Release Windows Executable
 on:
   push:
     tags:
-      - 'v*' # Triggers the build whenever you push a tag like v1.0, v1.1, etc.
+      - 'v*'
 
 permissions:
-  contents: write # Gives GitHub permission to create a release and upload files
+  contents: write
 
 jobs:
   build:
@@ -24,11 +24,19 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        # Added dependencies to ensure all imports are covered
         pip install PyQt5 PyQt6 PyQt6-WebEngine pynput pygame pyinstaller pywin32
 
     - name: Compile with PyInstaller
       run: |
-        pyinstaller --noconsole --onefile --icon=icon.ico --add-data "icon.ico;." --add-data "*.mp3;." --add-data "*.wav;." --add-data "*.gif;." dmod.py
+        # Added "--add-data "veil.py;."" to ensure the logic is included in the bundle
+        pyinstaller --noconsole --onefile --icon=icon.ico ^
+        --add-data "icon.ico;." ^
+        --add-data "veil.py;." ^
+        --add-data "*.mp3;." ^
+        --add-data "*.wav;." ^
+        --add-data "*.gif;." ^
+        dmod.py
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
