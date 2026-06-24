@@ -384,7 +384,8 @@ class SettingsWindow(QWidget):
         
         swatch_layout = QHBoxLayout()
         self.color_preview = QLabel()
-        self.color_preview.setFixedSize(96, 96) 
+        # Changed height from 96 to 48
+        self.color_preview.setFixedSize(96, 48) 
         self._update_color_swatch()
         
         swatch_controls = QVBoxLayout()
@@ -393,6 +394,8 @@ class SettingsWindow(QWidget):
         
         color_btn = QPushButton("Select Color")
         color_btn.setMinimumWidth(110)
+        # Set height to 48 to match the new swatch height (making it taller)
+        color_btn.setFixedHeight(30)
         color_btn.clicked.connect(self._on_pick_color)
         
         swatch_controls.addWidget(self.color_hex)
@@ -420,7 +423,22 @@ class SettingsWindow(QWidget):
 
         layout.addLayout(grid)
         layout.addStretch()
-        return card
+        
+        # Fade Durations (Added)
+        grid.addWidget(QLabel("Fade Speed (ms):"), 4, 0)
+        self.fade_spin = QSpinBox()
+        self.fade_spin.setRange(100, 5000)
+        self.fade_spin.setValue(self.overlay.fade_duration)
+        self.fade_spin.valueChanged.connect(self._on_fade_changed)
+        grid.addWidget(self.fade_spin, 4, 1)
+
+        grid.addWidget(QLabel("Pause Fade (ms):"), 5, 0)
+        self.pause_fade_spin = QSpinBox()
+        self.pause_fade_spin.setRange(100, 5000)
+        self.pause_fade_spin.setValue(self.overlay.fade_duration_pause)
+        self.pause_fade_spin.valueChanged.connect(self._on_pause_fade_changed)
+        grid.addWidget(self.pause_fade_spin, 5, 1)
+        return card       
 
     def _on_veil_type_changed(self, index):
         self.overlay.set_veil_type(self.veil_combo.itemData(index))
@@ -445,6 +463,14 @@ class SettingsWindow(QWidget):
         self.opacity_value_label.setText(f"{value}%")
         self.overlay.target_opacity = value / 100.0
         self.overlay.settings.setValue("opacity", self.overlay.target_opacity)
+        
+    def _on_fade_changed(self, value):
+        self.overlay.fade_duration = value
+        self.overlay.settings.setValue("delay", value)
+
+    def _on_pause_fade_changed(self, value):
+        self.overlay.fade_duration_pause = value
+        self.overlay.settings.setValue("delay_pause", value)
 
     def _build_col_system(self):
         card = QFrame()
