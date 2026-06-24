@@ -3,9 +3,10 @@ import os
 import ctypes
 import threading
 import pygame
-from PyQt5.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QMenu
+from PyQt5.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QMenu, QOpenGLWidget
 from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, pyqtProperty, pyqtSignal, QObject, QSettings, QEasingCurve
-from PyQt5.QtGui import QPainter, QColor, QPen, QIcon, QPixmap
+from PyQt5.QtGui import QPainter, QColor, QPen, QIcon, QPixmap, QSurfaceFormat
+from PyQt5.QtOpenGL import QGLFormat
 from pynput import keyboard, mouse as pynput_mouse
 from veil import get_veil, VEIL_LABELS
 from gui import SettingsWindow
@@ -137,7 +138,7 @@ class HotkeyManager(QObject):
         self.start_listener()
 
 
-class TheaterOverlay(QWidget):
+class TheaterOverlay(QOpenGLWidget):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("TheaterMode", "Settings")
@@ -160,21 +161,16 @@ class TheaterOverlay(QWidget):
         self.veil.set_parent(self)
 
         self.selection_shape = self.settings.value("selection_shape", "rectangle")
-
         self.anim = QPropertyAnimation(self, b"overlayOpacity")
         self.anim.setEasingCurve(QEasingCurve.InOutQuad)
 
     def set_veil_type(self, new_type):
-        if self.state != 'hidden':
-            self.veil.on_hide()
-            
+        if self.state != 'hidden': self.veil.on_hide()
         self.veil_type = new_type
         self.settings.setValue("veil_type", new_type)
         self.veil = get_veil(new_type)
         self.veil.set_parent(self)
-        
-        if self.state != 'hidden':
-            self.veil.on_show()
+        if self.state != 'hidden': self.veil.on_show()
         self.update()
 
     def set_selection_shape(self, shape):
@@ -182,23 +178,37 @@ class TheaterOverlay(QWidget):
         self.settings.setValue("selection_shape", shape)
         self.update()
 
-    def get_opacity(self):
-        return self._opacity
-
+    def get_opacity(self): return self._opacity
     def set_opacity(self, value):
         self._opacity = value
         self.update()
-
     overlayOpacity = pyqtProperty(float, get_opacity, set_opacity)
 
     def update_geometry_for_all_screens(self):
         rect = QRect()
-        for screen in QApplication.screens():
-            rect = rect.united(screen.geometry())
+        for screen in QApplication.screens(): rect = rect.united(screen.geometry())
         self.setGeometry(rect)
 
+    def start_selection(self):
+        self.anim.stop()
+        self.veil.on_hide()
+        
+        self.state = 'selecting'
+        # Clear selections to start fresh
+        self.selection_rects = []
+        self.current_rect = QRect()
+        self._opacity = 0.0
+        
+        self.update_geometry_for_all_screens()
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.setCursor(Qt.CrossCursor)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.update()
+
     def on_primary_pressed(self):
-        if self.state == 'hidden':
+        if self.state in ('hidden', 'hiding'):
             play_sound("Activate.mp3")
             self.start_selection()
         elif self.state in ('theater', 'paused'):
@@ -223,34 +233,13 @@ class TheaterOverlay(QWidget):
             self.veil.on_show()
             self.fade_to(self.target_opacity, self.fade_duration_pause)
 
-    def fade_to(self, target, duration, callback=None):
-        self.anim.stop()
-        try:
-            self.anim.finished.disconnect()
-        except Exception:
-            pass
-
-        self.anim.setDuration(duration)
-        self.anim.setStartValue(self._opacity)
-        self.anim.setEndValue(target)
-
-        if callback:
-            self.anim.finished.connect(callback)
-
-        self.anim.start()
-
-    def start_selection(self):
-        self.update_geometry_for_all_screens()
-        self.state = 'selecting'
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-        self.setCursor(Qt.CrossCursor)
-        self._opacity = 0.0
-        self.selection_rects = []
-        self.current_rect = QRect()
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        self.update()
+    def start_fade(self):
+        play_sound("Fade.mp3")
+        self.veil.on_show()
+        self.state = 'theater'
+        self.setCursor(Qt.ArrowCursor)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.fade_to(self.target_opacity, self.fade_duration)
 
     def reset_and_hide(self):
         self.veil.on_hide()
@@ -258,6 +247,16 @@ class TheaterOverlay(QWidget):
         self.selection_rects = []
         self.current_rect = QRect()
         self.hide()
+
+    def fade_to(self, target, duration, callback=None):
+        self.anim.stop()
+        try: self.anim.finished.disconnect()
+        except: pass
+        self.anim.setDuration(duration)
+        self.anim.setStartValue(self._opacity)
+        self.anim.setEndValue(target)
+        if callback: self.anim.finished.connect(callback)
+        self.anim.start()
 
     def mousePressEvent(self, event):
         if self.state == 'selecting' and event.button() == Qt.LeftButton:
@@ -278,31 +277,30 @@ class TheaterOverlay(QWidget):
             self.start_pos = None
             self.update()
 
-    def start_fade(self):
-        play_sound("Fade.mp3")
-        self.veil.on_show()
-        self.state = 'theater'
-        self.setCursor(Qt.ArrowCursor)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.fade_to(self.target_opacity, self.fade_duration)
-
     def paintEvent(self, event):
         painter = QPainter(self)
+        
+        # 1. Clear the canvas (prevents trails)
+        painter.setCompositionMode(QPainter.CompositionMode_Clear)
+        painter.fillRect(self.rect(), Qt.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        
         painter.setRenderHint(QPainter.Antialiasing)
 
+        # 2. SELECTION MODE: Draw both existing and current with chosen shape
         if self.state == 'selecting':
-            painter.fillRect(self.rect(), QColor(0, 0, 0, 80))
-            clear_selection_holes(painter, self.selection_rects, self.selection_shape)
+            pen = QPen(QColor(255, 255, 255, 200), 2, Qt.DashLine)
+            
+            # Draw existing selections
+            draw_selection_outlines(painter, self.selection_rects, self.selection_shape, pen)
+            
+            # Draw currently active selection
             if not self.current_rect.isNull() and not self.current_rect.isEmpty():
-                clear_selection_holes(painter, [self.current_rect], self.selection_shape)
+                draw_selection_outlines(painter, [self.current_rect], self.selection_shape, pen)
+            return
 
-            pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
-            draw_selection_outlines(
-                painter, self.selection_rects, self.selection_shape, pen,
-                current_rect=self.current_rect if not self.current_rect.isNull() else None,
-            )
-
-        elif self.state in ('theater', 'paused'):
+        # 3. THEATER MODE
+        if self.state in ('theater', 'paused'):
             self.veil.paint(
                 painter, self.rect(), self.selection_rects, self._opacity, self.veil_color,
                 self.selection_shape,
@@ -490,6 +488,13 @@ class AppController(QObject):
 
 
 if __name__ == '__main__':
+    format = QSurfaceFormat()
+    format.setDepthBufferSize(24)
+    format.setStencilBufferSize(8)
+    format.setVersion(2, 1)
+    format.setProfile(QSurfaceFormat.CompatibilityProfile)
+    QSurfaceFormat.setDefaultFormat(format)
+
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
