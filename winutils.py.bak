@@ -75,8 +75,7 @@ def toggle_desktop_icons():
     branches for the SysListView32 component.
     """
     # Required Windows API definitions for this specific function
-    # Using c_wchar_p (pointer to wide-character string) for string arguments
-    user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_wchar_p, ctypes.c_wchar_p]
+    user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
     user32.FindWindowExW.restype  = wintypes.HWND
     user32.GetWindow.argtypes     = [wintypes.HWND, ctypes.c_uint]
     user32.GetWindow.restype      = wintypes.HWND
@@ -84,9 +83,9 @@ def toggle_desktop_icons():
     user32.IsWindowVisible.restype  = wintypes.BOOL
     user32.ShowWindow.argtypes    = [wintypes.HWND, ctypes.c_int]
     user32.ShowWindow.restype     = wintypes.BOOL
-    user32.GetClassNameW.argtypes = [wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetClassNameW.argtypes = [wintypes.HWND, ctypes.LPWSTR, ctypes.c_int]
     user32.GetClassNameW.restype  = ctypes.c_int
-    user32.GetWindowTextW.argtypes = [wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, ctypes.LPWSTR, ctypes.c_int]
     user32.GetWindowTextW.restype  = ctypes.c_int
 
     GW_CHILD = 5
