@@ -19,6 +19,11 @@ pygame.mixer.init()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def play_sound(filename):
+    settings = QSettings("TheaterMode", "Settings")
+    # We store the mute state in a setting, e.g., "mute_Activate.mp3"
+    # If the user checks the box, we save True.
+    if settings.value(f"mute_{filename}", False, type=bool):
+        return
     """Play an MP3 from the script's directory, non-blocking. Silently no-ops if missing."""
     path = os.path.join(SCRIPT_DIR, filename)
     try:

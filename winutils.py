@@ -6,6 +6,8 @@ dependencies required.
 
 import ctypes
 import sys
+import winreg
+import os
 from ctypes import wintypes
 
 user32 = ctypes.windll.user32
@@ -129,6 +131,45 @@ def toggle_desktop_icons():
                 else:
                     user32.ShowWindow(h_lv, SW_SHOW)
                 return
+                
+                
+def set_autostart(enable=True):
+    """Adds or removes the application from the Windows Startup registry key."""
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    app_name = "DMod"
+    exe_path = sys.executable
+    
+    # Handle both PyInstaller executable and raw script execution
+    if getattr(sys, 'frozen', False):
+        target = f'"{exe_path}"'
+    else:
+        target = f'"{exe_path}" "{os.path.abspath(sys.argv[0])}"'
+        
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
+        if enable:
+            winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, target)
+        else:
+            try:
+                winreg.DeleteValue(key, app_name)
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+        return True
+    except Exception:
+        return False
+        
+def is_autostart_enabled():
+    """Checks if the app is currently in the Windows Startup registry."""
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    app_name = "DMod"
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
+        winreg.QueryValueEx(key, app_name)
+        winreg.CloseKey(key)
+        return True
+    except FileNotFoundError:
+        return False
 
 
 def is_admin():
