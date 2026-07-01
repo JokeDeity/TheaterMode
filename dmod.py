@@ -3,6 +3,7 @@ import os
 import ctypes
 import threading
 import pygame
+import traceback
 from PyQt5.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QMenu, QOpenGLWidget
 from PyQt5.QtCore import Qt, QRect, QPropertyAnimation, pyqtProperty, pyqtSignal, QObject, QSettings, QEasingCurve
 from PyQt5.QtGui import QPainter, QColor, QPen, QIcon, QPixmap, QSurfaceFormat
@@ -13,6 +14,12 @@ from gui import SettingsWindow
 from shapes import clear_selection_holes, draw_selection_outlines
 import winutils
 import mus
+
+def log_error(exc_type, exc_value, exc_traceback):
+    with open("crash_log.txt", "w") as f:
+        traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
+
+sys.excepthook = log_error
 
 # ── Sound setup ────────────────────────────────────────────────────────────
 pygame.mixer.init()
